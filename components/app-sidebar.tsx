@@ -22,8 +22,8 @@ const data = {
       icon: <RadioIcon />,
     },
     {
-      title: "AI Extraction",
-      url: "#",
+      title: "AI extraction",
+      url: "/ai-extraction",
       icon: <SparklesIcon />,
     },
     {
