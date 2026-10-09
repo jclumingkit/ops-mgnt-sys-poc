@@ -2,6 +2,7 @@
 
 import * as React from "react"
 
+import { ClockOutWorkflow } from "@/components/clock-out/ClockOutWorkflow"
 import { NavSecondary } from "@/components/nav-secondary"
 import {
   Sidebar,
@@ -33,6 +34,13 @@ const data = {
   ],
 }
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const [clockOutOpen, setClockOutOpen] = React.useState(false)
+  const navItems = data.nav.map((item) =>
+    item.title === "Clock Out"
+      ? { ...item, onClick: () => setClockOutOpen(true) }
+      : item,
+  )
+
   return (
     <Sidebar collapsible="offcanvas" {...props}>
       <SidebarHeader>
@@ -49,8 +57,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavSecondary items={data.nav} />
+        <NavSecondary items={navItems} />
       </SidebarContent>
+      <ClockOutWorkflow open={clockOutOpen} onOpenChange={setClockOutOpen} />
     </Sidebar>
   )
 }
