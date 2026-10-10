@@ -7,13 +7,9 @@ import type {
 const DEFAULT_FIRST_THREE_INTERVAL_MS = 10_000
 const DEFAULT_FOLLOWING_INTERVAL_MS = 60_000
 
-const leadProfiles = [
-  { display_name: "Demo Lead 001", email: "lead001@example.test", phone: "+1 555 010 1001", payer: "BCBS" },
-  { display_name: "Demo Lead 002", email: "lead002@example.test", phone: "+1 555 010 1002", payer: "Aetna" },
-  { display_name: "Demo Lead 003", email: "lead003@example.test", phone: "+1 555 010 1003", payer: "UnitedHealthcare" },
-  { display_name: "Demo Lead 004", email: "lead004@example.test", phone: "+1 555 010 1004", payer: "Cigna" },
-  { display_name: "Demo Lead 005", email: "lead005@example.test", phone: "+1 555 010 1005", payer: "Humana" },
-] as const
+const payers = ["BCBS", "Aetna", "UnitedHealthcare", "Cigna", "Humana"]
+
+type LeadUpdate = Partial<Pick<IntakeLead, "status" | "authorization_number" | "approval_date" | "diagnostic_report_uploaded">>
 
 type IntakeListener = (event: IntakeStreamEvent) => void
 type IntakeGenerator = {
@@ -24,7 +20,7 @@ type IntakeGenerator = {
   getLead: (leadId: string) => IntakeLead | undefined
   updateLead: (
     leadId: string,
-    update: Partial<Pick<IntakeLead, "status" | "authorization_number" | "approval_date" | "diagnostic_report_uploaded">>,
+    update: LeadUpdate,
   ) => IntakeLead | undefined
   subscribe: (listener: IntakeListener) => () => void
   getState: () => GeneratorState
@@ -62,18 +58,17 @@ const createGenerator = (): IntakeGenerator => {
 
   const generateLead = () => {
     const sequence = nextSequence
-    const profile = leadProfiles[(sequence - 1) % leadProfiles.length]
+    const payer = payers[(sequence - 1) % payers.length]
     const sequenceLabel = String(sequence).padStart(3, "0")
     const lead: IntakeLead = {
       id: `intake-lead-${sequenceLabel}`,
       source: "gohighlevel",
       sequence,
       created_at: new Date().toISOString(),
-      ...profile,
       display_name: `Demo Lead ${sequenceLabel}`,
       email: `lead${sequenceLabel}@example.test`,
       phone: `+1 555 010 ${String(1000 + sequence).padStart(4, "0")}`,
-      payer: sequence <= leadProfiles.length ? profile.payer : `${profile.payer} ${sequenceLabel}`,
+      payer: sequence <= payers.length ? payer : `${payer} ${sequenceLabel}`,
       status: "new_lead",
       authorization_number: "",
       approval_date: "",
@@ -134,7 +129,7 @@ const createGenerator = (): IntakeGenerator => {
 
   const updateLead = (
     leadId: string,
-    update: Partial<Pick<IntakeLead, "status" | "authorization_number" | "approval_date" | "diagnostic_report_uploaded">>,
+    update: LeadUpdate,
   ) => {
     const index = leads.findIndex((lead) => lead.id === leadId)
     if (index === -1) {
@@ -176,7 +171,7 @@ export const listIntakeLeads = () => generator.listLeads()
 export const getIntakeLead = (leadId: string) => generator.getLead(leadId)
 export const updateIntakeLead = (
   leadId: string,
-  update: Partial<Pick<IntakeLead, "status" | "authorization_number" | "approval_date" | "diagnostic_report_uploaded">>,
+  update: LeadUpdate,
 ) => generator.updateLead(leadId, update)
 export const subscribeToIntake = (listener: IntakeListener) => generator.subscribe(listener)
 export const getIntakeGeneratorState = () => generator.getState()

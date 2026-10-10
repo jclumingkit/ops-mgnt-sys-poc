@@ -16,7 +16,7 @@ type IntakeLeadCardProps = {
   isDragOverlay?: boolean
 }
 
-export function IntakeLeadCard({ lead, onMoveNext, isDragOverlay = false }: IntakeLeadCardProps) {
+export const IntakeLeadCard = ({ lead, onMoveNext, isDragOverlay = false }: IntakeLeadCardProps) => {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: lead.id,
     data: { status: lead.status, lead },
@@ -44,14 +44,14 @@ export function IntakeLeadCard({ lead, onMoveNext, isDragOverlay = false }: Inta
           ? "w-[min(20rem,calc(100vw-2rem))] rotate-2 opacity-90 shadow-xl"
           : isDragging
             ? "cursor-grabbing opacity-0"
-            : "cursor-grab shadow-sm"
+             : "cursor-grab py-0 shadow-sm transition-shadow hover:shadow-md"
       }
       {...(isDragOverlay ? {} : attributes)}
       {...(isDragOverlay ? {} : listeners)}
       aria-label={isDragOverlay ? undefined : `Drag ${lead.display_name}`}
       aria-hidden={isDragOverlay}
     >
-      <CardHeader className="gap-2 p-3 pb-0">
+      <CardHeader className="gap-2 p-4 pb-0">
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-w-0 items-start gap-2">
             <span className="mt-0.5 text-muted-foreground" aria-hidden="true">
@@ -62,12 +62,12 @@ export function IntakeLeadCard({ lead, onMoveNext, isDragOverlay = false }: Inta
               <p className="mt-1 truncate text-xs text-muted-foreground">{lead.payer}</p>
             </div>
           </div>
-          <Badge variant="outline" className="shrink-0">
+          <Badge variant="secondary" className="shrink-0 font-mono text-[10px]">
             #{lead.sequence}
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-3 p-3">
+      <CardContent className="space-y-4 p-4 pt-0">
         <div className="space-y-1 text-xs text-muted-foreground">
           <p className="truncate">{lead.email}</p>
           <p>{lead.phone}</p>

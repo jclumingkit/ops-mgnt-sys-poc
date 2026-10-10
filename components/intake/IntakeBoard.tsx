@@ -22,6 +22,7 @@ import {
 import { IntakeLeadCard } from "@/components/intake/IntakeLeadCard"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { WorkflowFeedback, type Feedback } from "@/components/WorkflowFeedback"
 import {
   INTAKE_STATUSES,
   INTAKE_STATUS_LABELS,
@@ -37,7 +38,6 @@ const collisionDetectionStrategy = (args: Parameters<typeof closestCorners>[0]) 
 }
 
 type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "error"
-type Feedback = { tone: "success" | "error" | "info"; message: string }
 
 const emptyForm: AuthorizationForm = {
   authorization_number: "",
@@ -45,15 +45,12 @@ const emptyForm: AuthorizationForm = {
   diagnostic_report_uploaded: false,
 }
 
-const getLeadFromResponse = (payload: unknown) => {
-  if (!payload || typeof payload !== "object") {
-    return null
-  }
+const upsertLead = (leads: IntakeLead[], updated: IntakeLead) =>
+  leads.some((lead) => lead.id === updated.id)
+    ? leads.map((lead) => lead.id === updated.id ? updated : lead)
+    : [...leads, updated]
 
-  return payload as IntakeLead
-}
-
-export function IntakeBoard() {
+export const IntakeBoard = () => {
   const [leads, setLeads] = useState<IntakeLead[]>([])
   const [optimisticLeads, moveOptimisticLead] = useOptimistic(
     leads,
@@ -77,17 +74,9 @@ export function IntakeBoard() {
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   )
 
-  const upsertLead = (lead: IntakeLead) => {
-    setLeads((currentLeads) => {
-      const index = currentLeads.findIndex((currentLead) => currentLead.id === lead.id)
-      if (index === -1) {
-        return [...currentLeads, lead]
-      }
-
-      return currentLeads.map((currentLead) =>
-        currentLead.id === lead.id ? lead : currentLead,
-      )
-    })
+  const notify = (tone: Feedback["tone"], message: string) => {
+    setFeedback({ tone, message })
+    setAnnouncement(message)
   }
 
   const resetDemo = async () => {
@@ -107,8 +96,7 @@ export function IntakeBoard() {
       setAnnouncement("Demo reset. Listening for new leads from the beginning.")
     } catch (error) {
       const message = error instanceof Error ? error.message : "The demo could not be reset."
-      setFeedback({ tone: "error", message })
-      setAnnouncement(message)
+      notify("error", message)
     } finally {
       setIsResetting(false)
     }
@@ -128,15 +116,7 @@ export function IntakeBoard() {
           if (payload.type === "snapshot" || payload.type === "demo_reset") {
             setLeads(payload.leads)
           } else {
-            setLeads((currentLeads) => {
-              const index = currentLeads.findIndex((lead) => lead.id === payload.lead.id)
-              if (index === -1) {
-                return [...currentLeads, payload.lead]
-              }
-              return currentLeads.map((lead) =>
-                lead.id === payload.lead.id ? payload.lead : lead,
-              )
-            })
+            setLeads((currentLeads) => upsertLead(currentLeads, payload.lead))
           }
 
           if (payload.type === "lead_created") {
@@ -240,19 +220,13 @@ export function IntakeBoard() {
           return
         }
 
-        const updatedLead = getLeadFromResponse(payload)
-        if (!updatedLead) {
+        if (!payload || typeof payload !== "object" || !("id" in payload)) {
           throw new Error("The transition response was invalid.")
         }
+        const updatedLead = payload as IntakeLead
 
-        upsertLead(updatedLead)
-        setFeedback({
-          tone: "success",
-          message: updatedLead.status === "schedule_assessment"
-            ? "Lead advanced to Schedule Assessment"
-            : `${updatedLead.display_name} advanced to ${INTAKE_STATUS_LABELS[updatedLead.status]}`,
-        })
-        setAnnouncement(
+        setLeads((currentLeads) => upsertLead(currentLeads, updatedLead))
+        notify("success",
           updatedLead.status === "schedule_assessment"
             ? "Lead advanced to Schedule Assessment"
             : `${updatedLead.display_name} advanced to ${INTAKE_STATUS_LABELS[updatedLead.status]}`,
@@ -265,8 +239,7 @@ export function IntakeBoard() {
         }
       } catch {
         const message = "The lead transition could not be completed. Please try again."
-        setFeedback({ tone: "error", message })
-        setAnnouncement(message)
+        notify("error", message)
       } finally {
         setIsSubmitting(false)
       }
@@ -324,12 +297,9 @@ export function IntakeBoard() {
 
     const nextStatus = getNextIntakeStatus(lead.status)
     if (destination !== nextStatus) {
-      const destinationLabel = isIntakeStatus(destination)
-        ? INTAKE_STATUS_LABELS[destination]
-        : destination
+      const destinationLabel = INTAKE_STATUS_LABELS[destination]
       const message = `${lead.display_name} must move to ${nextStatus ? INTAKE_STATUS_LABELS[nextStatus] : "the next stage"} before ${destinationLabel}.`
-      setFeedback({ tone: "error", message })
-      setAnnouncement(message)
+      notify("error", message)
       return
     }
 
@@ -357,26 +327,26 @@ export function IntakeBoard() {
   }[connectionStatus]
 
   return (
-    <main className="flex min-h-full flex-1 flex-col bg-background">
+    <main className="flex flex-1 flex-col">
       <div className="mx-auto flex w-full max-w-[1800px] flex-1 flex-col gap-6 p-4 md:p-6 lg:p-8">
-        <header className="flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-end sm:justify-between">
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-primary">
+            <p className="mb-2 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
               Operations intake
             </p>
-            <h1 className="font-heading text-3xl font-semibold tracking-tight md:text-4xl">
-              Real-Time Intake Workflow Demo
+            <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">
+              Intake pipeline
             </h1>
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-              New leads arrive from the simulated GoHighLevel integration.
+              Manage incoming leads, verify benefits, and prepare cases for assessment.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge
               role="status"
               aria-live="polite"
-              variant={connectionStatus === "connected" ? "default" : "outline"}
-              className="h-8 gap-2 px-3"
+              variant="outline"
+              className={`h-8 gap-2 bg-card px-3 ${connectionStatus === "connected" ? "text-primary" : "text-muted-foreground"}`}
             >
               <WifiIcon className="size-3.5" />
               {connectionLabel}
@@ -388,24 +358,24 @@ export function IntakeBoard() {
           </div>
         </header>
 
+        <div className="grid grid-cols-3 divide-x rounded-xl border bg-card py-4">
+          {[
+            { label: "Total leads", count: optimisticLeads.length },
+            { label: "Awaiting authorization", count: optimisticLeads.filter((lead) => lead.status === "authorization_pending").length },
+            { label: "Ready to schedule", count: optimisticLeads.filter((lead) => lead.status === "schedule_assessment").length },
+          ].map((metric) => (
+            <div key={metric.label} className="px-4 md:px-6">
+              <p className="text-[11px] text-muted-foreground md:text-xs">{metric.label}</p>
+              <p className="mt-1.5 text-2xl font-semibold tracking-tight tabular-nums">{metric.count}</p>
+            </div>
+          ))}
+        </div>
+
         <div className="sr-only" role="status" aria-live="polite">
           {announcement}
         </div>
 
-        {feedback && (
-          <div
-            role={feedback.tone === "error" ? "alert" : "status"}
-            className={
-              feedback.tone === "success"
-                ? "rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary"
-                : feedback.tone === "error"
-                  ? "rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-                  : "rounded-xl border bg-muted px-4 py-3 text-sm"
-            }
-          >
-            {feedback.message}
-          </div>
-        )}
+        <WorkflowFeedback feedback={feedback} />
 
         <DndContext
           sensors={sensors}
@@ -416,7 +386,7 @@ export function IntakeBoard() {
           onDragCancel={() => setActiveLead(null)}
           onDragEnd={handleDragEnd}
         >
-          <div className="grid flex-1 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid flex-1 grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-4">
             {INTAKE_STATUSES.map((status) => (
               <IntakeColumn
                 key={status}

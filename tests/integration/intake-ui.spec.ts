@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test"
 test("advances a lead through the keyboard action and authorization dialog", async ({ page }) => {
   await page.goto("/")
 
-  await expect(page.getByRole("heading", { name: "Real-Time Intake Workflow Demo" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Intake pipeline" })).toBeVisible()
   await expect(page.getByRole("region", { name: "New Lead" })).toContainText("Demo Lead 001")
   await expect(page.getByRole("region", { name: "Benefits Verification" })).toBeVisible()
   await expect(page.getByRole("region", { name: "Authorization Pending" })).toBeVisible()

@@ -4,15 +4,15 @@ import {
 } from "@/lib/ai-extraction/openrouter-client"
 import {
   MAX_NOTES_LENGTH,
+  EXTRACTION_FAILED_ERROR,
   type ExtractionRequest,
   type ExtractionStreamEvent,
 } from "@/lib/ai-extraction/types"
 
-const jsonHeaders = { "content-type": "application/json" }
 const inputError = (message: string) =>
   Response.json(
     { error: "EXTRACTION_INPUT_INVALID", message },
-    { status: 400, headers: jsonHeaders },
+    { status: 400 },
   )
 
 const providerUnavailable = () =>
@@ -21,41 +21,16 @@ const providerUnavailable = () =>
       error: "EXTRACTION_PROVIDER_UNAVAILABLE",
       message: "AI extraction is temporarily unavailable. Please try again later.",
     },
-    { status: 503, headers: jsonHeaders },
+    { status: 503 },
   )
 
 const encodeEvent = (event: ExtractionStreamEvent) => {
-  const eventName = event.type
-  let data: unknown
-
-  switch (event.type) {
-    case "extraction_started":
-      data = { attempt: event.attempt, max_attempts: event.max_attempts }
-      break
-    case "output_delta":
-      data = { text: event.text, attempt: event.attempt }
-      break
-    case "attempt_reset":
-      data = { attempt: event.attempt }
-      break
-    case "extraction_retrying":
-      data = { reason: event.reason, next_attempt: event.next_attempt }
-      break
-    case "extraction_complete":
-      data = { result: event.result }
-      break
-    case "extraction_error":
-      data = event.error
-      break
-    case "done":
-      data = { success: event.success }
-      break
-  }
-
-  return `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`
+  const { type, ...payload } = event
+  const data = event.type === "extraction_error" ? event.error : payload
+  return `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`
 }
 
-export async function POST(request: Request) {
+export const POST = async (request: Request) => {
   let body: unknown
   try {
     body = await request.json()
@@ -112,10 +87,7 @@ export async function POST(request: Request) {
         if (!cancelled) {
           send({
             type: "extraction_error",
-            error: {
-              code: "EXTRACTION_FAILED",
-              message: "The details could not be extracted right now. Please try again.",
-            },
+            error: EXTRACTION_FAILED_ERROR,
           })
           send({ type: "done", success: false })
         }

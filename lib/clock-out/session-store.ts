@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto"
 
-import { getCompletedPrompts } from "./validation"
 import {
   PROMPT_KEYS,
   type PromptKey,
   type PromptResponses,
   type ShiftSession,
 } from "./types"
-import { validateClockOut, validatePromptResponse, validatePromptSequence } from "./validation"
+import { getCompletedPrompts, validateClockOut, validatePromptResponse, validatePromptSequence } from "./validation"
 
 type SaveResponseResult =
   | { kind: "ok"; session: ShiftSession }

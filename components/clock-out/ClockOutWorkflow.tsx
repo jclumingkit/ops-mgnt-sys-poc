@@ -1,6 +1,9 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { CheckIcon, Clock3Icon } from "lucide-react"
+
+import { WorkflowFeedback, type Feedback } from "@/components/WorkflowFeedback"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -14,11 +17,6 @@ import {
 import { Label } from "@/components/ui/label"
 import { PROMPTS } from "@/lib/clock-out/prompts"
 import type { ClockOutApiError, PromptKey, ShiftSession } from "@/lib/clock-out/types"
-
-type Feedback = {
-  tone: "error" | "success"
-  message: string
-}
 
 type Answers = Record<PromptKey, string>
 
@@ -54,20 +52,16 @@ const getApiErrorMessage = (payload: unknown, fallback: string) => {
     return errorMessages[payload.error]
   }
 
-  if (payload && typeof payload === "object" && "error" in payload) {
-    return fallback
-  }
-
   return fallback
 }
 
-export function ClockOutWorkflow({
+export const ClockOutWorkflow = ({
   open,
   onOpenChange,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-}) {
+}) => {
   const [session, setSession] = useState<ShiftSession | null>(null)
   const [answers, setAnswers] = useState<Answers>(emptyAnswers)
   const [isCreating, setIsCreating] = useState(true)
@@ -77,27 +71,15 @@ export function ClockOutWorkflow({
   const [announcement, setAnnouncement] = useState("Preparing the end-of-day check-in.")
   const [focusPrompt, setFocusPrompt] = useState<PromptKey | null>(null)
   const [editingPrompt, setEditingPrompt] = useState<PromptKey | null>(null)
-  const [needsNewShift, setNeedsNewShift] = useState(false)
   const fieldRefs = useRef<Partial<Record<PromptKey, HTMLTextAreaElement | null>>>({})
   const isInitializing = useRef(false)
 
-  const startNewShift = async () => {
+  const createShift = useCallback(async (initial = false) => {
     if (isInitializing.current) {
       return
     }
 
     isInitializing.current = true
-    setIsCreating(true)
-    setNeedsNewShift(false)
-    setSession(null)
-    setAnswers(emptyAnswers())
-    setIsClockingOut(false)
-    setSavingPrompt(null)
-    setFeedback(null)
-    setAnnouncement("Starting a new shift.")
-    setFocusPrompt(null)
-    setEditingPrompt(null)
-
     try {
       const response = await fetch("/api/clock-out/sessions", { method: "POST" })
       if (!response.ok) {
@@ -109,45 +91,31 @@ export function ClockOutWorkflow({
       setAnswers(answersFromSession(newSession))
       setAnnouncement("New shift started. Complete the first prompt to continue.")
     } catch {
-      const message = "A new shift could not be started. Please try again."
+      const message = initial
+        ? "The end-of-day check-in could not be started. Please try again."
+        : "A new shift could not be started. Please try again."
       setFeedback({ tone: "error", message })
       setAnnouncement(message)
     } finally {
       isInitializing.current = false
       setIsCreating(false)
     }
+  }, [])
+
+  const startNewShift = () => {
+    setIsCreating(true)
+    setSession(null)
+    setAnswers(emptyAnswers())
+    setFeedback(null)
+    setFocusPrompt(null)
+    setEditingPrompt(null)
+    void createShift()
   }
 
   useEffect(() => {
-    if (session || needsNewShift || isInitializing.current) {
-      return
-    }
-
-    isInitializing.current = true
-
-    const initialize = async () => {
-      try {
-        const response = await fetch("/api/clock-out/sessions", { method: "POST" })
-        if (!response.ok) {
-          throw new Error("The end-of-day check-in could not be started.")
-        }
-
-        const newSession = (await response.json()) as ShiftSession
-        setSession(newSession)
-        setAnswers(answersFromSession(newSession))
-        setAnnouncement("End-of-day check-in ready. Complete the first prompt to continue.")
-      } catch {
-        const message = "The end-of-day check-in could not be started. Please try again."
-        setFeedback({ tone: "error", message })
-        setAnnouncement(message)
-      } finally {
-        isInitializing.current = false
-        setIsCreating(false)
-      }
-    }
-
+    const initialize = async () => { await createShift(true) }
     void initialize()
-  }, [needsNewShift, session])
+  }, [createShift])
 
   useEffect(() => {
     if (!focusPrompt || savingPrompt || isClockingOut) {
@@ -160,6 +128,17 @@ export function ClockOutWorkflow({
       setFocusPrompt(null)
     })
   }, [focusPrompt, isClockingOut, savingPrompt])
+
+  const handleSessionError = (error: Partial<ClockOutApiError>) => {
+    if (error.error !== "SHIFT_NOT_FOUND" && error.error !== "SHIFT_ALREADY_CLOCKED_OUT") {
+      return false
+    }
+    setSession(null)
+    setAnswers(emptyAnswers())
+    setEditingPrompt(null)
+    setFocusPrompt(null)
+    return true
+  }
 
   const submitPrompt = async (prompt: PromptKey) => {
     if (!session || session.status === "clocked_out") {
@@ -182,17 +161,7 @@ export function ClockOutWorkflow({
         const message = getApiErrorMessage(payload, "This response could not be saved.")
         setFeedback({ tone: "error", message })
         setAnnouncement(message)
-        if (
-          errorPayload.error === "SHIFT_NOT_FOUND" ||
-          errorPayload.error === "SHIFT_ALREADY_CLOCKED_OUT"
-        ) {
-          setNeedsNewShift(true)
-          setSession(null)
-          setAnswers(emptyAnswers())
-          setEditingPrompt(null)
-          setFocusPrompt(null)
-          return
-        }
+        if (handleSessionError(errorPayload)) return
         setFocusPrompt(errorPayload.prompt ?? prompt)
         return
       }
@@ -237,17 +206,7 @@ export function ClockOutWorkflow({
         const message = getApiErrorMessage(payload, "Clock out could not be completed.")
         setFeedback({ tone: "error", message })
         setAnnouncement(message)
-        if (
-          errorPayload.error === "SHIFT_NOT_FOUND" ||
-          errorPayload.error === "SHIFT_ALREADY_CLOCKED_OUT"
-        ) {
-          setNeedsNewShift(true)
-          setSession(null)
-          setAnswers(emptyAnswers())
-          setEditingPrompt(null)
-          setFocusPrompt(null)
-          return
-        }
+        if (handleSessionError(errorPayload)) return
         const missingPrompt = errorPayload.missing_prompts?.[0]
         if (missingPrompt) {
           setEditingPrompt(missingPrompt)
@@ -296,13 +255,14 @@ export function ClockOutWorkflow({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl overflow-y-auto p-0">
         <Card className="border-0 shadow-none ring-0">
-          <CardHeader className="gap-3 border-b">
+          <CardHeader className="gap-4 border-b px-6 pt-3 pr-10">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-primary">
+                <p className="mb-3 flex items-center gap-2 text-[11px] font-medium uppercase tracking-widest text-primary">
+                  <Clock3Icon className="size-4" />
                   End of shift
                 </p>
-                <DialogTitle className="text-2xl md:text-3xl">
+                <DialogTitle className="text-2xl tracking-tight">
                   End-of-Day Check-In
                 </DialogTitle>
                 <DialogDescription className="mt-2 max-w-2xl">
@@ -313,27 +273,20 @@ export function ClockOutWorkflow({
                 {completedCount}/{PROMPTS.length} complete
               </Badge>
             </div>
+            <div className="flex gap-2" aria-label={`${completedCount} of 3 prompts completed`}>
+              {PROMPTS.map((prompt, index) => (
+                <div key={prompt.key} className={`h-1 flex-1 rounded-full ${index < completedCount ? "bg-primary" : "bg-muted"}`} />
+              ))}
+            </div>
           </CardHeader>
 
-          {feedback && (
-            <div
-              role={feedback.tone === "error" ? "alert" : "status"}
-              id="clock-out-feedback"
-              className={
-                feedback.tone === "error"
-                  ? "mx-6 mt-6 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-                  : "mx-6 mt-6 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary"
-              }
-            >
-              {feedback.message}
-            </div>
-          )}
+          <WorkflowFeedback feedback={feedback} id="clock-out-feedback" className="mx-6 mt-2" />
 
           <div className="sr-only" role="status" aria-live="polite">
             {announcement}
           </div>
 
-          <CardContent className="space-y-6 pt-6">
+          <CardContent className="space-y-6 px-6 pt-2 pb-4">
             {isCreating ? (
               <div className="space-y-3" aria-label="Loading end-of-day check-in" role="status">
                 <div className="h-4 w-40 animate-pulse rounded bg-muted" />
@@ -361,7 +314,7 @@ export function ClockOutWorkflow({
                   }
                   disabled={savingPrompt !== null || isClockingOut}
                   aria-describedby={focusPrompt === activePrompt.key ? "clock-out-feedback" : undefined}
-                  className="min-h-28 w-full resize-y rounded-lg border bg-background px-3 py-3 text-sm leading-6 outline-none transition focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="workflow-textarea min-h-32"
                 />
                 <div className="flex justify-end">
                   <Button
@@ -380,7 +333,8 @@ export function ClockOutWorkflow({
                 </div>
               </div>
             ) : session ? (
-              <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 text-sm text-primary" role="status">
+              <div className="flex items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm text-primary" role="status">
+                <CheckIcon className="size-5 shrink-0" />
                 All prompts are complete. You can clock out when you are ready.
               </div>
             ) : (
@@ -398,7 +352,7 @@ export function ClockOutWorkflow({
                   {savedPrompts.map((prompt) => (
                     <div
                       key={prompt.key}
-                      className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4 sm:flex-row sm:items-start sm:justify-between"
+                      className="flex flex-col gap-3 rounded-lg bg-muted/50 p-4 sm:flex-row sm:items-start sm:justify-between"
                     >
                       <div className="min-w-0 space-y-1">
                         <p className="text-sm font-medium">{prompt.label}</p>
@@ -408,7 +362,7 @@ export function ClockOutWorkflow({
                       </div>
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="ghost"
                         onClick={() => {
                           setEditingPrompt(prompt.key)
                           setFeedback(null)
@@ -426,7 +380,7 @@ export function ClockOutWorkflow({
           </CardContent>
 
           {!isCreating && session && (
-            <CardFooter className="flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <CardFooter className="flex-col items-stretch gap-3 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted-foreground">
                 {isComplete ? "This shift is complete." : "Responses are saved only when you continue."}
               </p>

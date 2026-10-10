@@ -45,7 +45,7 @@ const fieldLabels = {
   diagnostic_report_uploaded: "Diagnostic report uploaded",
 } as const
 
-export function IntakeLeadDialog({
+export const IntakeLeadDialog = ({
   lead,
   open,
   form,
@@ -54,7 +54,7 @@ export function IntakeLeadDialog({
   onOpenChange,
   onFormChange,
   onSubmit,
-}: IntakeLeadDialogProps) {
+}: IntakeLeadDialogProps) => {
   useEffect(() => {
     const firstMissingField = blockedTransition?.missing_fields[0]
     if (!firstMissingField) {

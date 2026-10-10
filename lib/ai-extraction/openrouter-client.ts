@@ -29,25 +29,10 @@ const getTimeoutMs = () => {
     : DEFAULT_TIMEOUT_MS;
 };
 
-const getErrorName = (error: unknown) =>
-  error &&
-  typeof error === "object" &&
-  "name" in error &&
-  typeof error.name === "string"
-    ? error.name
-    : "";
-
-const getStatusCode = (error: unknown) =>
-  error &&
-  typeof error === "object" &&
-  "statusCode" in error &&
-  typeof error.statusCode === "number"
-    ? error.statusCode
-    : undefined;
-
 const getSdkErrorReason = (error: unknown): ExtractionRetryReason => {
-  const name = getErrorName(error);
-  const statusCode = getStatusCode(error);
+  const details = error as { name?: string; statusCode?: number } | null;
+  const name = typeof details?.name === "string" ? details.name : "";
+  const statusCode = details?.statusCode;
 
   if (name.includes("Timeout") || statusCode === 408 || statusCode === 524) {
     return "timeout";
@@ -64,19 +49,6 @@ const getSdkErrorReason = (error: unknown): ExtractionRetryReason => {
   return "provider_error";
 };
 
-const requestOptions = () => ({
-  timeoutMs: getTimeoutMs(),
-  retries: { strategy: "none" as const },
-});
-
-const throwProviderError = (error: unknown): never => {
-  if (error instanceof OpenRouterClientError) {
-    throw error;
-  }
-
-  throw new OpenRouterClientError(getSdkErrorReason(error));
-};
-
 export const runOpenRouterExtraction = async ({
   notes,
   onDelta,
@@ -89,49 +61,37 @@ export const runOpenRouterExtraction = async ({
   }
 
   const client = new OpenRouter({ apiKey: process.env.OPENROUTER_API_KEY });
-  const extractionPrompt = buildExtractionPrompt(notes);
-
-  let finalResult: ReturnType<OpenRouter["callModel"]> | undefined;
+  let result: ReturnType<OpenRouter["callModel"]> | undefined;
   try {
-    finalResult = client.callModel(
+    result = client.callModel(
       {
         model: OPENROUTER_MODEL,
-        input: extractionPrompt,
+        input: buildExtractionPrompt(notes),
         text: {
           format: {
             type: "json_schema",
             name: "call_notes_extraction",
             strict: true,
-            schema: extractionJsonSchema as unknown as Record<string, unknown>,
+            schema: extractionJsonSchema,
           },
         },
       },
-      requestOptions(),
+      { timeoutMs: getTimeoutMs(), retries: { strategy: "none" } },
     );
-  } catch (error) {
-    throwProviderError(error);
-  }
 
-  if (!finalResult) {
-    throw new OpenRouterClientError("provider_error");
-  }
-
-  let content = "";
-  try {
-    for await (const delta of finalResult.getTextStream()) {
+    let content = "";
+    for await (const delta of result.getTextStream()) {
       if (delta) {
         content += delta;
         onDelta(delta);
       }
     }
+    if (!content) throw new OpenRouterClientError("invalid_output");
+    return content;
   } catch (error) {
-    await finalResult.cancel().catch(() => undefined);
-    throwProviderError(error);
+    await result?.cancel().catch(() => undefined);
+    throw error instanceof OpenRouterClientError
+      ? error
+      : new OpenRouterClientError(getSdkErrorReason(error));
   }
-
-  if (!content) {
-    throw new OpenRouterClientError("invalid_output");
-  }
-
-  return content;
 };

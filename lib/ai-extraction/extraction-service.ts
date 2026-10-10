@@ -24,15 +24,8 @@ const getRetryReason = (error: unknown): ExtractionRetryReason => {
 }
 
 const parseFinalContent = (content: string): ExtractionResult => {
-  let parsed: unknown
   try {
-    parsed = JSON.parse(content)
-  } catch {
-    throw new OpenRouterClientError("invalid_output")
-  }
-
-  try {
-    return validateExtractionResult(parsed)
+    return validateExtractionResult(JSON.parse(content))
   } catch {
     throw new OpenRouterClientError("invalid_output")
   }
@@ -50,17 +43,13 @@ export const runExtraction = async (
 
   for (let attempt = 1; attempt <= MAX_EXTRACTION_ATTEMPTS; attempt += 1) {
     try {
-      let finalContent = ""
-      const resultContent = await runOpenRouterExtraction({
+      const content = await runOpenRouterExtraction({
         notes,
         onDelta: (text) => {
-          finalContent += text
           onEvent({ type: "output_delta", text, attempt })
         },
       })
-      finalContent = resultContent
-
-      const result = parseFinalContent(finalContent)
+      const result = parseFinalContent(content)
       onEvent({ type: "extraction_complete", result })
       onEvent({ type: "done", success: true })
       return result

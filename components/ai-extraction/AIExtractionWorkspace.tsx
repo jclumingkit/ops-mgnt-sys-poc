@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { flushSync } from "react-dom";
+import { BracesIcon, SparklesIcon, ArrowRightIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,36 +14,17 @@ import {
 } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { DEFAULT_MOCK_CALL_NOTES } from "@/lib/ai-extraction/mock-call-notes";
+import { readExtractionStream } from "@/lib/ai-extraction/read-stream";
+import { validateExtractionResult } from "@/lib/ai-extraction/schema";
+import { EXTRACTION_FAILED_ERROR } from "@/lib/ai-extraction/types";
+import { WorkflowFeedback } from "@/components/WorkflowFeedback";
 
 type WorkspaceStatus = "idle" | "pending" | "success" | "error";
 
-const TERMINAL_ERROR_MESSAGE =
-  "The details could not be extracted right now. Please try again.";
+const TERMINAL_ERROR_MESSAGE = EXTRACTION_FAILED_ERROR.message;
 
 const streamErrorMessage =
   "The extraction stream ended before a result was available. Please try again.";
-
-const parseSseRecord = (record: string) => {
-  const lines = record.split(/\r?\n/);
-  const eventLine = lines.find((line) => line.startsWith("event:"));
-  const dataLine = lines.find((line) => line.startsWith("data:"));
-
-  if (!eventLine || !dataLine) {
-    throw new Error("Malformed extraction stream event");
-  }
-
-  let data: unknown;
-  try {
-    data = JSON.parse(dataLine.slice(5).trim());
-  } catch {
-    throw new Error("Malformed extraction stream data");
-  }
-
-  return {
-    name: eventLine.slice(6).trim(),
-    data: data as Record<string, unknown>,
-  };
-};
 
 const getHttpErrorMessage = (status: number, payload: unknown) => {
   if (
@@ -66,13 +47,7 @@ const getHttpErrorMessage = (status: number, payload: unknown) => {
   return "The extraction request could not be started. Please try again.";
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === "object";
-
-const yieldToBrowser = () =>
-  new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-export function AIExtractionWorkspace() {
+export const AIExtractionWorkspace = () => {
   const [notes, setNotes] = useState(DEFAULT_MOCK_CALL_NOTES);
   const [partialOutput, setPartialOutput] = useState("");
   const [status, setStatus] = useState<WorkspaceStatus>("idle");
@@ -109,7 +84,6 @@ export function AIExtractionWorkspace() {
 
     let receivedTerminalEvent = false;
     let receivedDoneEvent = false;
-    let activeReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
     const applyEvent = (name: string, data: Record<string, unknown>) => {
       switch (name) {
@@ -128,9 +102,8 @@ export function AIExtractionWorkspace() {
           if (typeof data.text !== "string") {
             throw new Error("Malformed extraction output event");
           }
-          flushSync(() => {
-            setPartialOutput((current) => current + data.text);
-          });
+          const text = data.text;
+          setPartialOutput((current) => current + text);
           break;
         case "attempt_reset":
           if (typeof data.attempt !== "number") {
@@ -152,9 +125,7 @@ export function AIExtractionWorkspace() {
           break;
         }
         case "extraction_complete":
-          if (!isRecord(data.result)) {
-            throw new Error("Malformed extraction result event");
-          }
+          validateExtractionResult(data.result);
           receivedTerminalEvent = true;
           setStatus("success");
           setError(null);
@@ -200,47 +171,7 @@ export function AIExtractionWorkspace() {
         throw new Error(streamErrorMessage);
       }
 
-      const reader = response.body.getReader();
-      activeReader = reader;
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-
-        const decodedChunk = decoder.decode(value, { stream: true });
-        console.log("[ai-extraction] client stream chunk", {
-          at: new Date().toISOString(),
-          bytes: value.byteLength,
-          text: decodedChunk,
-        });
-        buffer += decodedChunk;
-        const records = buffer.split(/\r?\n\r?\n/);
-        buffer = records.pop() ?? "";
-        for (const record of records) {
-          if (record.trim()) {
-            const event = parseSseRecord(record);
-            console.log("[ai-extraction] client SSE event", {
-              at: new Date().toISOString(),
-              event: event.name,
-              data: event.data,
-            });
-            applyEvent(event.name, event.data);
-            await yieldToBrowser();
-          }
-        }
-      }
-
-      if (buffer.trim()) {
-        const event = parseSseRecord(buffer);
-        console.log("[ai-extraction] client SSE event", {
-          at: new Date().toISOString(),
-          event: event.name,
-          data: event.data,
-        });
+      for await (const event of readExtractionStream(response.body)) {
         applyEvent(event.name, event.data);
       }
 
@@ -255,16 +186,9 @@ export function AIExtractionWorkspace() {
       const message =
         caughtError instanceof Error ? caughtError.message : streamErrorMessage;
       setStatus("error");
-      setError(
-        message === TERMINAL_ERROR_MESSAGE
-          ? message
-          : message || streamErrorMessage,
-      );
+      setError(message || streamErrorMessage);
       setAnnouncement(message || streamErrorMessage);
     } finally {
-      await activeReader?.cancel().catch(() => undefined);
-      activeReader?.releaseLock();
-      activeReader = null;
       activeRequest.current = null;
       setStatus((current) => (current === "pending" ? "error" : current));
     }
@@ -280,29 +204,28 @@ export function AIExtractionWorkspace() {
           : "Ready to extract";
 
   return (
-    <main className="flex flex-1 flex-col gap-6 p-4 lg:p-6">
+    <main className="flex flex-1 flex-col gap-8 p-4 md:p-6 lg:p-8">
       <div className="mx-auto w-full max-w-7xl space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">
+        <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
           Structured AI workspace
         </p>
-        <h2 className="text-3xl font-semibold tracking-tight md:text-4xl">
+        <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">
           AI Call Notes Extraction
-        </h2>
-        <p className="max-w-3xl text-sm leading-6 text-muted-foreground md:text-base">
-          Extract a small, typed record from mock call notes. This demonstration
-          uses an AI provider and is not intended for real patient information.
+        </h1>
+        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+          Turn call notes into a consistent record, ready for the next step in intake.
         </p>
       </div>
 
       <div className="mx-auto grid w-full max-w-7xl gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Card className="min-w-0">
-          <CardHeader>
-            <CardTitle>Call notes</CardTitle>
+          <CardHeader className="px-6 pt-2">
+            <CardTitle className="flex items-center gap-2"><SparklesIcon className="size-4 text-primary" />Call notes</CardTitle>
             <CardDescription>
-              Edit the mock note before starting an explicit extraction request.
+              Review the sample or enter your own mock call notes.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-5 px-6 pb-2">
             <div className="space-y-2">
               <Label htmlFor="raw-call-notes">Raw call notes</Label>
               <textarea
@@ -310,7 +233,7 @@ export function AIExtractionWorkspace() {
                 value={notes}
                 onChange={(event) => setNotes(event.target.value)}
                 disabled={status === "pending"}
-                className="min-h-64 w-full resize-y rounded-lg border bg-background px-3 py-3 text-sm leading-6 outline-none transition focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60"
+                className="workflow-textarea min-h-72"
               />
             </div>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -327,14 +250,15 @@ export function AIExtractionWorkspace() {
                   : error
                     ? "Try again"
                     : "Start extraction"}
+                <ArrowRightIcon />
               </Button>
             </div>
           </CardContent>
         </Card>
 
-        <section className="min-w-0 space-y-4">
+        <section className="min-w-0 space-y-5 rounded-xl border bg-card p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold">Extracting JSON data</h3>
+            <h2 className="flex items-center gap-2 text-base font-medium"><BracesIcon className="size-4 text-primary" />Structured record</h2>
             <Badge
               variant={
                 status === "success"
@@ -352,32 +276,27 @@ export function AIExtractionWorkspace() {
             {announcement}
           </div>
 
-          {error && (
-            <div
-              role="alert"
-              className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-            >
-              {error}
-            </div>
-          )}
+          <WorkflowFeedback id="ai-extraction-feedback" feedback={error ? { tone: "error", message: error } : null} />
 
           {partialOutput ? (
             <pre
               aria-label="Streaming extraction JSON"
-              className="max-h-[32rem] overflow-auto rounded-lg border bg-muted/30 p-4 font-mono text-xs leading-6 whitespace-pre-wrap break-words"
+              className="min-h-72 max-h-[32rem] overflow-auto rounded-lg border bg-background p-5 font-mono text-xs leading-7 whitespace-pre-wrap break-words"
             >
               {partialOutput}
             </pre>
           ) : status === "pending" ? (
             <div
               aria-label="Waiting for streamed JSON"
-              className="rounded-lg border border-dashed p-8 text-center font-mono text-2xl tracking-[0.35em] text-muted-foreground animate-pulse"
+              className="flex min-h-72 items-center justify-center rounded-lg border border-dashed text-center font-mono text-2xl tracking-[0.35em] text-muted-foreground animate-pulse"
             >
               ...
             </div>
           ) : (
-            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-              Your extracted JSON will appear here.
+            <div className="flex min-h-72 flex-col items-center justify-center gap-3 rounded-lg border border-dashed bg-background p-8 text-center text-sm text-muted-foreground">
+              <BracesIcon className="size-8 text-primary/40" />
+              <p>Your extracted JSON will appear here.</p>
+              <p className="max-w-60 text-xs leading-5">Parent, child, payer, and follow-up date in one validated record.</p>
             </div>
           )}
         </section>

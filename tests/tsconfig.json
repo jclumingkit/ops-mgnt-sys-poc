@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["../*"],
+      "@openrouter/agent": ["./fixtures/OpenRouter.ts"],
+      "server-only": ["./fixtures/OpenRouter.ts"]
+    }
+  }
+}
